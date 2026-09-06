@@ -159,9 +159,9 @@ class Score(BaseModel):
 __all__ = [
     "Chain",
     "DexSource",
-    "Token",
     "Pair",
     "RugSignals",
-    "ScoreComponents",
     "Score",
+    "ScoreComponents",
+    "Token",
 ]

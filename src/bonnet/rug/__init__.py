@@ -6,9 +6,9 @@ rather than guess).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from ..models import Pair, RugSignals, Token
+from ..models import Pair, RugSignals, Token  # noqa: F401 (re-exported for tests)
 
 # Standard ERC20 function selectors we use to probe contracts
 SELECTORS = {
@@ -26,7 +26,7 @@ def age_from_pair(pair: Pair, now: datetime | None = None) -> float | None:
     """Hours since the pair was created. None if unknown."""
     if not pair.created_at:
         return None
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return max(0.0, (now - pair.created_at).total_seconds() / 3600.0)
 
 
@@ -210,11 +210,11 @@ def aggregate(
 __all__ = [
     "SELECTORS",
     "age_from_pair",
-    "holder_concentration_penalty",
     "age_penalty",
-    "authority_penalty",
-    "lp_lock_penalty",
-    "honeypot_penalty",
-    "deployer_penalty",
     "aggregate",
+    "authority_penalty",
+    "deployer_penalty",
+    "holder_concentration_penalty",
+    "honeypot_penalty",
+    "lp_lock_penalty",
 ]

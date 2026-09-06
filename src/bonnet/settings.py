@@ -6,7 +6,7 @@ so a misconfigured deployment fails fast with a useful message.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -51,6 +51,10 @@ class Settings(BaseSettings):
 
     # Storage
     db_path: Path = Path("./state/bonnet.db")
+
+    # Factories (JSON string). See factory_scanner.DEFAULT_FACTORIES for the
+    # canonical examples. Empty list = rely on defaults.
+    factories_json: str = ""
 
     # Logging
     log_level: str = "INFO"
@@ -108,4 +112,4 @@ def ensure_dirs(settings: Settings | None = None) -> None:
     Path("./logs").mkdir(parents=True, exist_ok=True)
 
 
-__all__ = ["Settings", "get_settings", "reset_cache", "reload_from", "ensure_dirs"]
+__all__ = ["Settings", "ensure_dirs", "get_settings", "reload_from", "reset_cache"]

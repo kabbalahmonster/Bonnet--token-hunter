@@ -11,7 +11,7 @@ Use these to assert the scorer's behavior is sane across the spectrum.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from bonnet.models import Chain, Pair, Token
 
@@ -27,7 +27,7 @@ def _token(symbol: str = "TKN") -> Token:
 
 
 def good_volume_steady() -> Pair:
-    now = datetime.now(timezone.utc) - timedelta(days=14)
+    now = datetime.now(UTC) - timedelta(days=14)
     return Pair(
         pair_address="0x" + "a" * 40,
         chain=Chain.ROBINHOOD,
@@ -49,7 +49,7 @@ def good_volume_steady() -> Pair:
 
 
 def rug_in_progress() -> Pair:
-    now = datetime.now(timezone.utc) - timedelta(days=2)
+    now = datetime.now(UTC) - timedelta(days=2)
     return Pair(
         pair_address="0x" + "b" * 40,
         chain=Chain.ROBINHOOD,
@@ -71,7 +71,7 @@ def rug_in_progress() -> Pair:
 
 
 def dead_coin() -> Pair:
-    now = datetime.now(timezone.utc) - timedelta(days=60)
+    now = datetime.now(UTC) - timedelta(days=60)
     return Pair(
         pair_address="0x" + "c" * 40,
         chain=Chain.ROBINHOOD,
@@ -93,7 +93,7 @@ def dead_coin() -> Pair:
 
 
 def pump_and_dump() -> Pair:
-    now = datetime.now(timezone.utc) - timedelta(hours=4)
+    now = datetime.now(UTC) - timedelta(hours=4)
     return Pair(
         pair_address="0x" + "d" * 40,
         chain=Chain.ROBINHOOD,
@@ -115,7 +115,7 @@ def pump_and_dump() -> Pair:
 
 
 def honeypot_signal() -> Pair:
-    now = datetime.now(timezone.utc) - timedelta(hours=1)
+    now = datetime.now(UTC) - timedelta(hours=1)
     return Pair(
         pair_address="0x" + "e" * 40,
         chain=Chain.ROBINHOOD,
@@ -137,9 +137,9 @@ def honeypot_signal() -> Pair:
 
 
 __all__ = [
-    "good_volume_steady",
-    "rug_in_progress",
     "dead_coin",
-    "pump_and_dump",
+    "good_volume_steady",
     "honeypot_signal",
+    "pump_and_dump",
+    "rug_in_progress",
 ]

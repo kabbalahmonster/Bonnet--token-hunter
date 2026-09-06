@@ -88,7 +88,7 @@ class DexScreenerClient:
 
     async def search(self, query: str) -> list[Pair]:
         """Free-text search across all chains. Filter to Robinhood."""
-        data = await self._get(f"/dex/search", params={"q": query})
+        data = await self._get("/dex/search", params={"q": query})
         raw_pairs = data.get("pairs") or []
         return [self._to_pair(p) for p in raw_pairs if p.get("chainId") == self.CHAIN_SLUG]
 
@@ -132,7 +132,7 @@ class DexScreenerClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "DexScreenerClient":
+    async def __aenter__(self) -> DexScreenerClient:
         return self
 
     async def __aexit__(self, *exc: object) -> None:

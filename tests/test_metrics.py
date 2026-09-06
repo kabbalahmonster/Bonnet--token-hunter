@@ -21,7 +21,7 @@ class TestVolumeQuality:
 
     def test_thin_book_penalized(self) -> None:
         # pump_and_dump has vol/liquidity > 5x
-        s, notes = volume_quality(fx.pump_and_dump())
+        _s, notes = volume_quality(fx.pump_and_dump())
         assert any("thin book" in n or "ratio" in n for n in notes)
 
 
@@ -41,5 +41,5 @@ class TestVolatilityCharacter:
         assert s < 0.3
 
     def test_pump_and_dump_flagged(self) -> None:
-        s, notes = volatility_character(fx.pump_and_dump())
+        _s, notes = volatility_character(fx.pump_and_dump())
         assert any("pump" in n or "extreme" in n for n in notes)

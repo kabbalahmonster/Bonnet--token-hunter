@@ -115,4 +115,4 @@ def volatility_character(p: Pair) -> tuple[float, list[str]]:
     return score, notes
 
 
-__all__ = ["volume_quality", "volatility_character"]
+__all__ = ["volatility_character", "volume_quality"]

@@ -1,0 +1,18 @@
+[Unit]
+Description=Bonnet — token hunter for Robinhood Chain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fuzzbox/projects/coin-analyzer
+Environment=PATH=/home/fuzzbox/projects/coin-analyzer/.venv/bin
+EnvironmentFile=/home/fuzzbox/projects/coin-analyzer/.env
+ExecStart=/home/fuzzbox/projects/coin-analyzer/.venv/bin/bonnet watch --interval 15
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

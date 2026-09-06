@@ -5,12 +5,11 @@ final Score object with explainable components.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ..metrics import volatility_character, volume_quality
 from ..models import Pair, RugSignals, Score, ScoreComponents
 from ..rug import aggregate as aggregate_rug
-
 
 # Default weights — tuned so a "good" candidate lands ~0.65-0.80.
 # Override per-environment by editing here, or by passing a ScoreConfig.
@@ -44,7 +43,7 @@ def score_pair(
 
     pair_age_h = None
     if pair.created_at:
-        pair_age_h = max(0.0, (datetime.now(timezone.utc) - pair.created_at).total_seconds() / 3600.0)
+        pair_age_h = max(0.0, (datetime.now(UTC) - pair.created_at).total_seconds() / 3600.0)
 
     rug_signals: RugSignals = aggregate_rug(
         top10_pct=top10_holder_pct,
@@ -82,11 +81,7 @@ def score_pair(
                 rug_signals.is_contract_verified,
             )
         )
-        if not has_any_signal:
-            rug_res = 0.5  # unknown — neither trusted nor rejected
-        else:
-            # Map rug_risk in [0, 1] to rug_resistance in [0, 1]
-            rug_res = max(0.0, min(1.0, 1.0 - rug_signals.rug_risk))
+        rug_res = 0.5 if not has_any_signal else max(0.0, min(1.0, 1.0 - rug_signals.rug_risk))
 
     components = ScoreComponents(
         volume_quality=vol_score,
@@ -115,9 +110,9 @@ def score_pair(
         components=components,
         rug_signals=rug_signals,
         composite=max(0.0, min(1.0, composite)),
-        scored_at=datetime.now(timezone.utc),
+        scored_at=datetime.now(UTC),
         explanation=explanation,
     )
 
 
-__all__ = ["score_pair", "DEFAULT_WEIGHTS"]
+__all__ = ["DEFAULT_WEIGHTS", "score_pair"]

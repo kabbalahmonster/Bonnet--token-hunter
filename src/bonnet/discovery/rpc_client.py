@@ -16,12 +16,6 @@ import time
 from typing import Any
 
 import httpx
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ..logging import get_logger
 from ..settings import Settings, get_settings
@@ -134,6 +128,10 @@ class RpcClient:
 
     async def eth_get_logs(self, filter_params: dict[str, Any]) -> list[dict[str, Any]]:
         return await self.call("eth_getLogs", [filter_params])
+
+    async def eth_get_storage_at(self, address: str, slot: str, block: str = "latest") -> str:
+        """Read a storage slot at `address`. Returns 32-byte hex word."""
+        return await self.call("eth_getStorageAt", [address, slot, block])
 
     async def close(self) -> None:
         """No persistent connection to close (httpx.AsyncClient is per-call)."""
