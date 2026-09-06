@@ -1,0 +1,1 @@
+"""Scoring subsystem: combine volume, volatility, and rug into a final score."""
