@@ -300,6 +300,8 @@ The scorer is the most-tested piece — if you change the weights or heuristics,
 1. Implement an async iterator/factory in `discovery/<source>.py`
 2. Update `pipeline.run_scan` to merge its pairs with DexScreener's
 
+**GitHub Actions CI**: a workflow file is included at `.github/workflows/ci.yml` but isn't committed in initial PRs because GitHub requires the `workflow` scope on a PAT to add workflow files. To enable CI: open the file in GitHub's web editor, or create a token with `workflow` scope. The workflow runs the test suite + ruff + import smoke test on Python 3.11/3.12/3.13.
+
 ---
 
 ## Known limitations & roadmap
