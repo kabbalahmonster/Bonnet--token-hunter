@@ -139,11 +139,16 @@ bonnet scan [--threshold F] [--top N] [--no-enrich] [--holders] [--lp-check] [--
 bonnet watch [--interval MIN] [--threshold F] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
 bonnet history [--limit N] [--since-hours H]
 bonnet show <address> [--chain C] [--with-history] [--limit N]
-bonnet backtest <labels.json> [--threshold F] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
+bonnet backtest [--labels-file FILE] [--threshold F] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
 bonnet watchlist add <address> [--symbol S] [--notes "..."]
 bonnet watchlist rm <address>
 bonnet watchlist list
 bonnet watchlist score [--threshold F] [--dry-run-notify]
+bonnet label <address> <good|moon|rug> [--symbol S] [--notes "..."]
+bonnet label-list [--filter-label good|moon|rug]
+bonnet label-rm <address>
+bonnet label-import <file.csv|file.json>
+bonnet label-auto [--include-watchlist/--no-watchlist] [--include-discovered/--no-discovered]
 bonnet detect-factories <known_pool_address> [--kind-hint v3]
 bonnet --help
 ```
@@ -222,21 +227,48 @@ All settings are loaded from environment variables prefixed `BONNET_`. See `.env
 
 ## Backtesting
 
-Once you have a labeled set of tokens (good / moon / rug), validate your scoring weights against history:
+Backtest scores labeled tokens against the live scoring engine and reports how well the weights separate good / moon / rug.
 
-1. Create `data/labels.json`:
-   ```json
-   [
-     {"address": "0x...", "symbol": "GOOD", "label": "good", "notes": "sustained"},
-     {"address": "0x...", "symbol": "MOON", "label": "moon", "notes": "10x winner"},
-     {"address": "0x...", "symbol": "RUG",  "label": "rug",  "notes": "scammed"}
-   ]
-   ```
-2. Run:
-   ```bash
-   bonnet backtest data/labels.json --threshold 0.65
-   ```
-3. Output is a confusion matrix (good/moon vs rug), mean score per label, rug recall, good precision, and per-token scores.
+### Build the labeled dataset
+
+Three ways to populate `data/labels.json`:
+
+**1. Manual** (highest quality — use this for tokens you've personally traded):
+```bash
+bonnet label 0xCD45E9d812f2052Df1F320E442C2336489e167B9 moon --symbol RH --notes "Robinhood Names, ecosystem token"
+bonnet label 0x79Fe86b963255Ce884bdcaC6388C50a599Ba277f good --symbol ROBINHOOD
+bonnet label 0x... rug --symbol SCAM --notes "drained LP on day 5"
+bonnet label-list
+```
+
+**2. CSV / JSON import** (for bulk labels from external sources):
+```bash
+# CSV header: address,label,symbol,notes
+bonnet label-import data/sample-labels.csv
+# JSON: array of {address, label, symbol, notes, source, confidence, labeled_at}
+bonnet label-import my-labels.json
+```
+
+**3. Auto-bootstrap** (lowest confidence — uses heuristics + your watchlist):
+```bash
+bonnet label-auto
+# Heuristics applied:
+#   watchlist entries → labeled 'good' (you curated these)
+#   24h price drop ≤ -80% → labeled 'rug' (conf=0.7)
+#   24h vol ≥ $50k AND change in [-20%, +200%] → labeled 'good' (conf=0.6)
+# Auto-labels have confidence < 1.0; manual labels always win.
+```
+
+### Run the backtest
+
+```bash
+bonnet backtest                              # uses data/labels.json, default threshold 0.65
+bonnet backtest --threshold 0.5              # lower threshold = more flags
+bonnet backtest --weight-volume 0.4          # tune the volume component weight
+bonnet backtest --labels-file custom.json    # use a different labels file
+```
+
+Output is a confusion matrix (good/moon vs rug), mean score per label, rug recall, good precision, and per-token scores.
 
 Useful for tuning `DEFAULT_WEIGHTS` in `scoring/scorer.py`. With at least 5 good/moon and 5 rug examples, you can start seeing whether your weights separate them well.
 
@@ -306,18 +338,19 @@ The scorer is the most-tested piece — if you change the weights or heuristics,
 
 ## Known limitations & roadmap
 
-- **Mint authority (AccessControl)** ✅ shipped in v0.4.0 — `getRoleMemberCount(MINTER_ROLE)` probe; if 0, mint authority is effectively renounced.
-- **Trend detection + breakout alerts** ✅ shipped in v0.4.0 — `compute_trend()` compares current score to last 5 samples; `should_alert_with_trend()` fires on `above_threshold`, `breakout`, or `rising_fast` (delta > 0.10 + 25%).
-- **`bonnet show <addr>`** ✅ shipped in v0.4.0 — drill into one token's full score breakdown + history + trend.
-- **`bonnet watchlist score`** ✅ shipped in v0.4.0 — score just watchlist entries (faster than full scan, useful for high-frequency tracking).
-- **GitHub Actions CI** ✅ shipped in v0.4.0 — matrix test on Python 3.11/3.12/3.13, ruff, import smoke test.
-- **Holder concentration** ✅ shipped in v0.3.0 (`--holders` flag, opt-in due to RPC cost)
-- **LP lock detection** ✅ shipped in v0.3.0 (`--lp-check` flag)
-- **Backtest mode** ✅ shipped in v0.3.0 (`bonnet backtest data/labels.json`)
-- **Systemd timer** ✅ shipped in v0.3.0 (`contrib/bonnet-scan.{service,timer}`)
+- **Mint authority (AccessControl)** ✅ shipped in v0.4.0
+- **Trend detection + breakout alerts** ✅ shipped in v0.4.0
+- **`bonnet show <addr>`** ✅ shipped in v0.4.0
+- **`bonnet watchlist score`** ✅ shipped in v0.4.0
+- **GitHub Actions CI** ✅ shipped in v0.4.0 (workflow file kept locally due to PAT scope limitation)
+- **Holder concentration** ✅ shipped in v0.3.0
+- **LP lock detection** ✅ shipped in v0.3.0
+- **Backtest mode** ✅ shipped in v0.3.0
+- **Systemd timer** ✅ shipped in v0.3.0
+- **Labels subsystem (manual/import/auto)** ✅ shipped in v0.5.0
 - **On-chain factory discovery is best-effort** for non-canonical chains. Public Robinhood RPC is rate-limited and slow for log scanning; production deployments should use a paid RPC.
+- **Labeled dataset growth** — auto-bootstrap gives 1–3 labels per scan. Manual labeling drives real signal. Aim for ≥20 labels spanning good/moon/rug.
 - **Web dashboard** — deliberately deferred. The CLI + Telegram path is sufficient for v1.
-- **Labeled dataset growth** — backtest is only as good as the labels. Recommend labeling 20+ tokens (mix of good/moon/rug) and re-running to validate weight choices.
 - **Multi-source factory config** — once you've identified Robinhood Chain's specific factory contracts, populate `BONNET_FACTORIES` in `.env` to discover new pairs without rate-limited search APIs.
 
 ---

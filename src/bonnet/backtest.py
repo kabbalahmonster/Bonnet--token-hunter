@@ -4,34 +4,21 @@ Given a set of labeled tokens (good vs rug), score them as if they were
 newly discovered and report how well the weights separate them. Useful for
 tuning `DEFAULT_WEIGHTS` in scoring/scorer.py.
 
-Label file format (JSON):
-  [
-    {"address": "0x...", "symbol": "GOOD", "label": "good",  "notes": "..."},
-    {"address": "0x...", "symbol": "RUG",  "label": "rug",   "notes": "..."},
-    {"address": "0x...", "symbol": "MOON", "label": "moon",  "notes": "..."}
-  ]
-
-Three labels:
-  - "good":  sustained, didn't rug, decent volume
-  - "moon":  10x+ winner — the kind we WANT to flag
-  - "rug":   rugged, scammed, abandoned
-
-Outputs:
-  - Per-token scores
-  - Confusion matrix (good/moon vs rug at the threshold)
-  - Mean score per label
-  - Recommendation if any label is consistently misclassified
+Reads from `data/labels.json` (LabelStore) by default — that's where
+`bonnet label`, `bonnet label-import`, and `bonnet label-auto` write.
 
 Run:
-  bonnet backtest labels.json --rpc-endpoints ...
+  bonnet backtest
+  bonnet backtest --threshold 0.7
+  bonnet backtest --labels-file custom.json --weight-volume 0.4
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from .discovery.dexscreener import DexScreenerClient
+from .labels import Label, LabelStore
 from .logging import get_logger
 from .models import Pair
 from .onchain.enricher import ContractEnricher
@@ -42,14 +29,6 @@ from .pipeline import score_one_pair
 from .scoring.scorer import DEFAULT_WEIGHTS
 
 log = get_logger("bonnet.backtest")
-
-
-@dataclass
-class LabeledToken:
-    address: str
-    symbol: str
-    label: str  # "good" | "moon" | "rug"
-    notes: str = ""
 
 
 @dataclass
@@ -76,20 +55,10 @@ class BacktestSummary:
     good_precision: float  # fraction of flagged tokens that are good/moon
 
 
-def _load_labels(path: Path) -> list[LabeledToken]:
-    data = json.loads(path.read_text())
-    out: list[LabeledToken] = []
-    for entry in data:
-        try:
-            out.append(LabeledToken(
-                address=entry["address"].lower(),
-                symbol=entry.get("symbol", ""),
-                label=entry["label"],
-                notes=entry.get("notes", ""),
-            ))
-        except KeyError as e:
-            raise ValueError(f"label entry missing key {e}: {entry}") from None
-    return out
+def _load_labels(path: Path) -> list[Label]:
+    """Load labels from a LabelStore JSON file."""
+    store = LabelStore.load(path)
+    return store.all()
 
 
 async def run_backtest(
@@ -246,7 +215,6 @@ def format_summary(summary: BacktestSummary) -> str:
 __all__ = [
     "BacktestResult",
     "BacktestSummary",
-    "LabeledToken",
     "format_summary",
     "run_backtest",
 ]

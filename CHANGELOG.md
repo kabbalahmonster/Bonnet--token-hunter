@@ -2,6 +2,27 @@
 
 All notable changes to Bonnet.
 
+## [0.5.0] — Sprint 5
+
+### Added
+- **Labels subsystem** (`bonnet/labels.py`): persistent, file-backed (`data/labels.json`) labeled dataset with three sources: `manual`, `import`, `auto`. Manual labels always win; auto-labels carry confidence < 1.0.
+- **`bonnet label <addr> good|moon|rug`**: manually label a token with optional symbol and notes.
+- **`bonnet label-list`**: list all labels, optionally filtered by label.
+- **`bonnet label-rm`**: remove a label.
+- **`bonnet label-import <file>`**: bulk import from CSV (`address,label,symbol,notes`) or JSON (array or envelope with `labels` key).
+- **`bonnet label-auto`**: bootstrap labels from heuristics — watchlist entries → `good`, 24h drop ≤ -80% → `rug`, 24h vol ≥ $50k with healthy change → `good`.
+- **Sample labels** (`data/sample-labels.csv`): 2 moon/good entries with comments showing the auto-labeled rug.
+- **Backtest CLI**: `labels_file` is now optional — defaults to `data/labels.json`.
+- **17 new tests** for labels module + backtest integration.
+
+### Changed
+- **`backtest.py`**: now uses the unified `LabelStore` instead of its own JSON loader. Old label format (`data/labels.json` with bare array) is still supported via `LabelStore` envelope detection.
+- **`Label` dataclass**: validates label set + address shape on construction.
+
+### Verified live
+- `bonnet label-auto` against live DexScreener discovered `0xee1ea4e9…` (Robinhood) — 24h change -92.9%, auto-labeled `rug`.
+- `bonnet backtest` against the new labels file produced a clean confusion matrix: 1 moon flagged, 1 rug correctly skipped, mean scores `moon=0.657` vs `rug=0.380`.
+
 ## [0.4.0] — Sprint 4
 
 ### Added

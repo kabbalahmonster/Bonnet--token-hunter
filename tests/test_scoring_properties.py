@@ -11,7 +11,7 @@ Validates invariants that should hold for *any* valid input:
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from bonnet.models import Chain, Pair, Token
 from bonnet.rug import aggregate as aggregate_rug
@@ -21,7 +21,7 @@ from bonnet.scoring.scorer import score_pair
 def _random_pair(rng: random.Random) -> Pair:
     """Generate a randomized Pair for property testing."""
     days_old = rng.uniform(0, 365)
-    created_at = datetime.now(timezone.utc) - timedelta(days=days_old)
+    created_at = datetime.now(UTC) - timedelta(days=days_old)
     v24 = rng.uniform(0, 1_000_000)
     v6 = rng.uniform(0, v24)
     v1 = rng.uniform(0, v6)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import UTC
 from pathlib import Path
 
 import click
@@ -291,13 +292,18 @@ def show_cmd(address: str, chain: str, with_history: bool, limit: int) -> None:
 
 
 @cli.command(name="backtest")
-@click.argument("labels_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--labels-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to labels.json (default: data/labels.json)",
+)
 @click.option("--threshold", default=0.65, show_default=True, type=float)
 @click.option("--weight-volume", default=0.30, show_default=True, type=float)
 @click.option("--weight-volatility", default=0.30, show_default=True, type=float)
 @click.option("--weight-rug", default=0.40, show_default=True, type=float)
 def backtest_cmd(
-    labels_file: Path,
+    labels_file: Path | None,
     threshold: float,
     weight_volume: float,
     weight_volatility: float,
@@ -305,21 +311,204 @@ def backtest_cmd(
 ) -> None:
     """Score labeled tokens and report separation between good/moon/rug.
 
-    LABELS_FILE is a JSON array of {address, symbol, label, notes}.
-    label must be one of: good, moon, rug.
+    Labels are loaded from data/labels.json (or --labels-file). Populate
+    via `bonnet label`, `bonnet label-import`, or `bonnet label-auto`.
     """
     from .backtest import format_summary, run_backtest
     from .settings import get_settings
 
     settings = get_settings()
     weights = {"volume": weight_volume, "volatility": weight_volatility, "rug": weight_rug}
+    labels_path = labels_file or Path("data/labels.json")
+    if not labels_path.exists():
+        click.echo(
+            f"labels file not found: {labels_path}\n"
+            "Run `bonnet label <addr> good|moon|rug`, `bonnet label-import <file>`, "
+            "or `bonnet label-auto` to populate.",
+            err=True,
+        )
+        sys.exit(1)
     summary = asyncio.run(run_backtest(
-        labels_file,
+        labels_path,
         settings=settings,
         threshold=threshold,
         weights=weights,
     ))
     click.echo(format_summary(summary))
+
+
+@cli.command(name="label")
+@click.argument("address")
+@click.argument("label_value", metavar="LABEL")
+@click.option("--symbol", default="")
+@click.option("--notes", default="")
+def label_cmd(address: str, label_value: str, symbol: str, notes: str) -> None:
+    """Manually label a token (good/moon/rug). Persisted to data/labels.json."""
+    from datetime import datetime
+
+    from .labels import VALID_LABELS, Label, LabelStore
+
+    addr = address.lower()
+    if not addr.startswith("0x") or len(addr) != 42:
+        click.echo(f"invalid address: {address}", err=True)
+        sys.exit(1)
+    if label_value not in VALID_LABELS:
+        click.echo(f"label must be one of {VALID_LABELS}, got {label_value!r}", err=True)
+        sys.exit(1)
+
+    label = Label(
+        address=addr,
+        label=label_value,
+        symbol=symbol,
+        notes=notes,
+        source="manual",
+        confidence=1.0,
+        labeled_at=datetime.now(UTC).isoformat(),
+    )
+    store = LabelStore.load(Path("data/labels.json"))
+    is_new = store.add(label)
+    store.save()
+    verb = "added" if is_new else "updated"
+    click.echo(f"{verb} {addr} ({symbol}) = {label_value}")
+
+
+@cli.command(name="label-list")
+@click.option("--filter-label", default=None, metavar="LABEL", help="filter by good/moon/rug")
+def label_list(filter_label: str | None) -> None:
+    """List all labeled tokens."""
+    from .labels import VALID_LABELS, LabelStore
+
+    if filter_label and filter_label not in VALID_LABELS:
+        click.echo(f"filter must be one of {VALID_LABELS}", err=True)
+        sys.exit(1)
+
+    store = LabelStore.load(Path("data/labels.json"))
+    rows = store.filter(filter_label) if filter_label else store.all()
+    click.echo(f"{len(rows)} labels:")
+    for lbl in sorted(rows, key=lambda x: x.label):
+        click.echo(
+            f"  [{lbl.label:<4}] {lbl.address}  {lbl.symbol:<10} "
+            f"({lbl.source}, conf={lbl.confidence:.1f}) {lbl.notes}"
+        )
+
+
+@cli.command(name="label-rm")
+@click.argument("address")
+def label_rm(address: str) -> None:
+    """Remove a label."""
+    from .labels import LabelStore
+
+    store = LabelStore.load(Path("data/labels.json"))
+    if store.remove(address):
+        store.save()
+        click.echo(f"removed {address.lower()}")
+    else:
+        click.echo(f"no label for {address.lower()}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="label-import")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def label_import_cmd(file: Path) -> None:
+    """Import labels from CSV or JSON file."""
+    from .labels import LabelStore, import_labels_from_csv, import_labels_from_json
+
+    suffix = file.suffix.lower()
+    if suffix == ".csv":
+        imported = import_labels_from_csv(file)
+    elif suffix == ".json":
+        imported = import_labels_from_json(file)
+    else:
+        click.echo(f"unsupported file format: {suffix} (need .csv or .json)", err=True)
+        sys.exit(1)
+
+    store = LabelStore.load(Path("data/labels.json"))
+    added = 0
+    for lbl in imported:
+        if store.add(lbl):
+            added += 1
+    store.save()
+    click.echo(
+        f"imported {added} new labels from {file.name} "
+        f"({len(imported) - added} already existed)"
+    )
+
+
+@cli.command(name="label-auto")
+@click.option("--include-watchlist/--no-watchlist", default=True, help="label watchlist as 'good'")
+@click.option("--include-discovered/--no-discovered", default=True, help="heuristic-label discovered tokens")
+def label_auto_cmd(include_watchlist: bool, include_discovered: bool) -> None:
+    """Auto-label tokens by heuristic + watchlist.
+
+    Heuristics:
+      - watchlist entries → labeled 'good' (you've curated these as interesting)
+      - 24h price drop ≤ -80% → labeled 'rug'
+      - 24h volume ≥ $50k AND change in [-20%, +200%] → labeled 'good'
+
+    Auto-labels have confidence < 1.0; manual labels always win.
+    """
+    import asyncio as _asyncio
+    from datetime import datetime
+
+    from .discovery.dexscreener import DexScreenerClient
+    from .labels import Label, LabelStore, auto_label_from_pair
+
+    store = LabelStore.load(Path("data/labels.json"))
+    added = 0
+    now = datetime.now(UTC).isoformat()
+
+    async def _go() -> int:
+        nonlocal added
+
+        # 1. Watchlist → good
+        if include_watchlist:
+            watchlist_rows: list[tuple[str, str, str]] = []
+            try:
+                from .storage.sqlite import Storage
+                async with Storage(Path("state/bonnet.db")) as s:
+                    watchlist_rows = await s.watchlist_list()
+            except Exception as e:
+                click.echo(f"  (watchlist read failed: {e})")
+            for addr, sym, _added in watchlist_rows:
+                lbl = Label(
+                    address=addr,
+                    label="good",
+                    symbol=sym,
+                    notes="auto: watchlist entry",
+                    source="auto",
+                    confidence=0.8,
+                    labeled_at=now,
+                )
+                if store.add(lbl):
+                    added += 1
+                    click.echo(f"  + {addr[:10]}… ({sym}) = good [watchlist]")
+
+        # 2. Discovered tokens → heuristic
+        if include_discovered:
+            async with DexScreenerClient() as dex:
+                pairs = await dex.latest_pairs()
+            for p in pairs:
+                lbl = auto_label_from_pair(
+                    symbol=p.token.symbol or "?",
+                    address=p.token.address,
+                    change_24h=p.price_change_pct_24h,
+                    vol_24h=p.volume_usd_24h,
+                )
+                if lbl is None:
+                    continue
+                if store.add(lbl):
+                    added += 1
+                    click.echo(f"  + {lbl.address[:10]}… ({lbl.symbol}) = {lbl.label} [{lbl.notes}]")
+        return added
+
+    added = _asyncio.run(_go())
+    store.save()
+    click.echo(f"\n{added} new auto-labels written to data/labels.json")
+    counts = {lbl: len(store.filter(lbl)) for lbl in ("good", "moon", "rug")}
+    click.echo(
+        f"Total labels: {sum(counts.values())} "
+        f"(good={counts['good']}, moon={counts['moon']}, rug={counts['rug']})"
+    )
 
 
 @cli.command(name="detect-factories")

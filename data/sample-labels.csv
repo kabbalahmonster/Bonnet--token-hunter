@@ -1,0 +1,8 @@
+address,label,symbol,notes
+# Known ecosystem / high-quality tokens (Robinhood Chain)
+0xCD45E9d812f2052Df1F320E442C2336489e167B9,moon,RH,Robinhood Names — official ecosystem token
+0x79Fe86b963255Ce884bdcaC6388C50a599Ba277f,good,ROBINHOOD,Robinhood brand token, sustained
+
+# Notable: this token dropped -92% in 24h on the day we ran label-auto
+# (uncomment after running bonnet label-auto and identifying real rugs)
+# 0xee1ea4e95d24e81be0f3fb54cc75f13f3cf8e6bc,rug,Robinhood,auto: 24h change -92.9%

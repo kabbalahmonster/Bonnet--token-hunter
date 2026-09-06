@@ -7,33 +7,45 @@ from pathlib import Path
 import pytest
 
 from bonnet.backtest import BacktestResult, BacktestSummary, _load_labels, format_summary
+from bonnet.labels import Label
 
 
 def test_load_labels_minimal(tmp_path: Path) -> None:
     p = tmp_path / "labels.json"
-    p.write_text(json.dumps([
-        {"address": "0x" + "a" * 40, "symbol": "A", "label": "good"},
-        {"address": "0x" + "b" * 40, "symbol": "B", "label": "rug"},
-    ]))
+    p.write_text(json.dumps({
+        "schema_version": 1,
+        "labels": [
+            {"address": "0x" + "a" * 40, "symbol": "A", "label": "good"},
+            {"address": "0x" + "b" * 40, "symbol": "B", "label": "rug"},
+        ],
+    }))
     labels = _load_labels(p)
     assert len(labels) == 2
+    assert isinstance(labels[0], Label)
     assert labels[0].symbol == "A"
     assert labels[1].label == "rug"
 
 
 def test_load_labels_lowercases_address(tmp_path: Path) -> None:
     p = tmp_path / "labels.json"
-    p.write_text(json.dumps([
-        {"address": "0xABCDEF" + "0" * 36, "symbol": "X", "label": "moon"},
-    ]))
+    p.write_text(json.dumps({
+        "schema_version": 1,
+        "labels": [
+            {"address": "0x" + "ABCDEF" + "0" * 34, "symbol": "X", "label": "moon"},
+        ],
+    }))
     labels = _load_labels(p)
-    assert labels[0].address == "0xabcdef" + "0" * 36
+    assert labels[0].address == "0x" + "abcdef" + "0" * 34
 
 
-def test_load_labels_raises_on_missing_key(tmp_path: Path) -> None:
+def test_load_labels_handles_missing_address(tmp_path: Path) -> None:
+    """A label entry without 'address' raises (KeyError from dataclass)."""
     p = tmp_path / "labels.json"
-    p.write_text(json.dumps([{"symbol": "A", "label": "good"}]))  # no address
-    with pytest.raises(ValueError, match="missing key"):
+    p.write_text(json.dumps({
+        "schema_version": 1,
+        "labels": [{"symbol": "A", "label": "good"}],
+    }))
+    with pytest.raises(KeyError):
         _load_labels(p)
 
 
