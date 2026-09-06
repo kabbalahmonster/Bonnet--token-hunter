@@ -2,6 +2,24 @@
 
 All notable changes to Bonnet.
 
+## [0.4.0] — Sprint 4
+
+### Added
+- **Mint authority (AccessControl) probing** (`bonnet/onchain/enricher.py`): probes `getRoleMemberCount(MINTER_ROLE)` and `DEFAULT_ADMIN_ROLE` (canonical OZ role hashes). When AccessControl is detected, mint-authority state is derived from minter count rather than owner().
+- **Trend detection** (`bonnet/trend.py`): `compute_trend()` compares current composite to N samples back, returns direction (rising/falling/flat), delta, pct_change, and detects breakout/breakdown across the alert threshold.
+- **Trend-aware alerts**: `should_alert_with_trend()` fires on three reasons: `above_threshold` (static), `breakout` (just crossed up), `rising_fast` (delta > 0.10 + 25%). The pipeline now alerts on breakout/rising_fast in addition to static threshold.
+- **`bonnet show <address>`**: drill into one token — composite, components, rug signals, full explanation, history, trend. Supports `--with-history` for trend context.
+- **`bonnet watchlist score`**: score just watchlist entries (skips DexScreener discovery). Fast for high-frequency tracking.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): matrix test on Python 3.11/3.12/3.13, ruff lint, import smoke test, type check.
+- **Deployment verified on this VPS**: `bonnet-scan.service` + `bonnet-scan.timer` installed via systemd, `--user` mode, scheduled 5-min scans.
+
+### Changed
+- **Pipeline alerts now use trend**: instead of static threshold alone, alerts include the trend reason (`above_threshold`, `breakout`, `rising_fast`). Telegram messages for breakout/rising_fast include a trend header line.
+- **`score_history()` storage method**: new method to fetch chronological score history for a token (used by trend detection).
+
+### Tests
+- 19 new tests (trend directions, breakout detection, alert decision logic, role selector encoding, score history retrieval).
+
 ## [0.3.0] — Sprint 3
 
 ### Added

@@ -196,6 +196,100 @@ def wl_list() -> None:
         click.echo(f"  {added[:19]}  {addr}  {sym}")
 
 
+@watchlist.command(name="score")
+@click.option("--threshold", default=None, type=float)
+@click.option("--dry-run-notify", is_flag=True)
+def wl_score(threshold: float | None, dry_run_notify: bool) -> None:
+    """Score every watchlist entry (faster than full scan).
+
+    Useful when you want frequent updates on tokens you're already tracking.
+    """
+    from .pipeline import run_scan_for_addresses
+    from .storage.sqlite import Storage
+    settings = get_settings()
+    th = threshold if threshold is not None else settings.score_alert_threshold
+
+    async def _go() -> list:
+        async with Storage(settings.db_path) as s:
+            rows = await s.watchlist_list()
+        return [addr for addr, _, _ in rows]
+
+    addrs = asyncio.run(_go())
+    if not addrs:
+        click.echo("watchlist is empty — add tokens with `bonnet watchlist add`")
+        return
+
+    click.echo(f"Scoring {len(addrs)} watchlist tokens…")
+    scores = asyncio.run(run_scan_for_addresses(
+        addrs,
+        settings=settings,
+        notify_threshold=th,
+        dry_run_notify=dry_run_notify,
+    ))
+    if not scores:
+        click.echo("(no scores)")
+        return
+    click.echo(f"{'FLAG':<3} {'SYMBOL':<12} {'SCORE':>6}  ADDR")
+    click.echo("-" * 50)
+    for s in scores:
+        flag = "🚩" if s.composite < th else "  "
+        sym = (s.token.symbol or "?")[:12]
+        click.echo(f"{flag} {sym:<10} {s.composite:>6.3f}  {s.token.short_address}")
+
+
+@cli.command(name="show")
+@click.argument("address")
+@click.option("--chain", default="robinhood", show_default=True)
+@click.option("--with-history", is_flag=True, help="show last 10 scores and trend")
+@click.option("--limit", default=10, show_default=True, type=int)
+def show_cmd(address: str, chain: str, with_history: bool, limit: int) -> None:
+    """Show detailed scoring breakdown for a single token."""
+    from .storage.sqlite import Storage
+    from .trend import compute_trend
+
+    addr = address.lower()
+    settings = get_settings()
+
+    async def _go() -> tuple:
+        async with Storage(settings.db_path) as s:
+            latest = await s.latest_score(addr, chain)
+            history = await s.score_history(addr, chain, limit=limit) if with_history else []
+        return latest, history
+
+    latest, history = asyncio.run(_go())
+
+    if latest is None:
+        click.echo(f"no score recorded for {addr[:10]}… — run `bonnet scan` first")
+        sys.exit(1)
+
+    click.echo(f"=== {latest.token.symbol or '?'} ({latest.token.short_address}) ===")
+    click.echo(f"chain:        {chain}")
+    click.echo(f"composite:    {latest.composite:.3f}")
+    click.echo(f"  volume:     {latest.components.volume_quality:.3f}")
+    click.echo(f"  volatility: {latest.components.volatility_character:.3f}")
+    click.echo(f"  rug_resist: {latest.components.rug_resistance:.3f}")
+    click.echo(f"rug_risk:     {latest.rug_signals.rug_risk:.3f}")
+    click.echo(f"scored_at:    {latest.scored_at.isoformat()}")
+    if latest.rug_signals.notes:
+        click.echo("rug notes:")
+        for note in latest.rug_signals.notes:
+            click.echo(f"  • {note}")
+    click.echo("explanation:")
+    for line in latest.explanation:
+        click.echo(f"  {line}")
+    if with_history and len(history) > 1:
+        trend = compute_trend(history)
+        click.echo(
+            f"\ntrend: {trend.direction} "
+            f"(Δ={trend.delta:+.3f}, {trend.pct_change:+.1f}%) "
+            f"over {trend.samples_used} samples"
+        )
+        if trend.is_breakout:
+            click.echo("  ⚡ breakout — just crossed the alert threshold upward")
+        if trend.is_breakdown:
+            click.echo("  ⚠ breakdown — just crossed the alert threshold downward")
+
+
 @cli.command(name="backtest")
 @click.argument("labels_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--threshold", default=0.65, show_default=True, type=float)

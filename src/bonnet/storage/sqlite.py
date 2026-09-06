@@ -167,6 +167,21 @@ class Storage:
         await cur.close()
         return [Score.model_validate(json.loads(r[0])) for r in rows]
 
+    async def score_history(self, address: str, chain: str = "robinhood", limit: int = 50) -> list[Score]:
+        """All historical scores for a single token, oldest first."""
+        db = self._require()
+        cur = await db.execute(
+            """
+            SELECT score_json FROM scores
+            WHERE token_address = ? AND chain = ?
+            ORDER BY scored_at ASC LIMIT ?
+            """,
+            (address.lower(), chain, limit),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        return [Score.model_validate(json.loads(r[0])) for r in rows]
+
     # ---- watchlist -------------------------------------------------------------
 
     async def watchlist_add(self, token: Token, notes: str = "") -> None:

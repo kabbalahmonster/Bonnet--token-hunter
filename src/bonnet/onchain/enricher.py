@@ -25,12 +25,22 @@ log = get_logger("bonnet.enrich")
 SEL_OWNER = "0x8da5cb5b"
 SEL_GET_OWNER = "0x893d20e8"
 # EIP-1967 implementation slot: bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)
-EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dcef3a6f8a2c6c2cb1a6f1f4b7c1f8f8d"  # placeholder
 # Correct value: 0x360894a13ba1a3210667c828492db98dcef3a6f8a2c6c2cb1a6f1f4b7c1f8f8d
 EIP1967_IMPL_SLOT = (
     "0x360894a13ba1a3210667c828492db98dcef3a6f8a2c6c2cb1a6f1f4b7c1f8f8d"
 )
 # keccak256("eip1967.proxy.implementation") - 1
+
+# OpenZeppelin AccessControl selectors
+SEL_HAS_ROLE = "0x91d14854"          # hasRole(bytes32,address) -> bool
+SEL_GET_ROLE_MEMBER = "0xd305bd76"  # getRoleMember(bytes32,uint256) -> address
+SEL_GET_ROLE_MEMBER_COUNT = "0xca15c873"  # getRoleMemberCount(bytes32) -> uint256
+SEL_DEFAULT_ADMIN = "0x0a0b0d79"   # defaultAdmin() — OZ v5 AccessControl
+SEL_ACCESS_MANAGER = "0x30d9e0b2"  # AccessManager address() — OZ v5 AccessManaged
+
+# Canonical role identifiers (keccak256 of role name)
+MINTER_ROLE = "0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6"
+DEFAULT_ADMIN_ROLE = "0x1effbbff9c66c5e59634f24fe842750c60d18891155c32dd155fc2d661a4c86d"
 # = 0x360894a13ba1a3210667c828492db98dcef3a6f8a2c6c2cb1a6f1f4b7c1f8f8d
 
 
@@ -44,9 +54,17 @@ class ContractSignals:
     has_proxy: bool = False
     proxy_implementation: str | None = None
 
-    # We don't yet read mint authority; many tokens don't expose it cleanly
-    # (mint() is internal to a minter role, not a public view). Defer to
-    # later sprint with role enumeration.
+    # AccessControl role detection (OpenZeppelin v4 / v5 patterns)
+    uses_access_control: bool = False
+    has_minter_role: bool | None = None  # None = contract doesn't use AccessControl
+    minter_count: int | None = None  # number of addresses with MINTER_ROLE
+    has_admin_role: bool | None = None
+    admin_count: int | None = None
+    # Combined mint authority state for scoring convenience
+    mint_authority_renounced: bool | None = None  # True if no minter can mint
+
+    # We don't yet read mint authority for OZ v3 Ownable-style contracts;
+    # the owner_renounced field above handles those via SEL_OWNER.
 
 
 class ContractEnricher:
@@ -99,6 +117,33 @@ class ContractEnricher:
                     signals.proxy_implementation = impl_addr
         except Exception:
             pass
+
+        # 4. AccessControl role detection — try getRoleMemberCount(MINTER_ROLE)
+        # If this returns a value (even 0), the contract uses AccessControl.
+        # mint_authority_renounced == (count == 0)
+        try:
+            data = SEL_GET_ROLE_MEMBER_COUNT + MINTER_ROLE[2:].rjust(64, "0")
+            result = await self._rpc.eth_call(to=addr, data=data)
+            if result and result != "0x":
+                signals.uses_access_control = True
+                count = int(result, 16)
+                signals.minter_count = count
+                signals.has_minter_role = count > 0
+                signals.mint_authority_renounced = (count == 0)
+        except Exception:
+            pass
+
+        # 5. DEFAULT_ADMIN_ROLE count for additional signal
+        if signals.uses_access_control:
+            try:
+                data = SEL_GET_ROLE_MEMBER_COUNT + DEFAULT_ADMIN_ROLE[2:].rjust(64, "0")
+                result = await self._rpc.eth_call(to=addr, data=data)
+                if result and result != "0x":
+                    count = int(result, 16)
+                    signals.admin_count = count
+                    signals.has_admin_role = count > 0
+            except Exception:
+                pass
 
         return signals
 

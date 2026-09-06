@@ -38,6 +38,17 @@ async def score_one_pair(
             kwargs["owner_renounced"] = signals.owner_renounced
             kwargs["has_proxy"] = signals.has_proxy
             kwargs["is_contract_verified"] = True  # we got code back; treat as verified
+            # AccessControl-based mint authority: take precedence over the owner()
+            # heuristic, since role-based minting is the modern pattern.
+            if signals.uses_access_control and signals.mint_authority_renounced is not None:
+                kwargs["mint_renounced"] = signals.mint_authority_renounced
+                log.info(
+                    "access_control",
+                    token=pair.token.symbol,
+                    minters=signals.minter_count,
+                    admins=signals.admin_count,
+                    renounced=signals.mint_authority_renounced,
+                )
         except Exception as e:
             log.warning("enrich_failed", token=pair.token.address, error=str(e))
 
@@ -178,7 +189,9 @@ async def run_scan(
                 log.warning("record_failed", token=s.token.address, error=str(e))
             seen_addrs.add(s.token.address.lower())
 
-        # Alerts: any above threshold, dedup by cooldown
+        # Alerts: any above threshold OR breakout/rising-fast, dedup by cooldown
+        from .trend import compute_trend, should_alert_with_trend
+
         notifier = TelegramNotifier(
             settings.telegram_bot_token,
             settings.telegram_chat_id,
@@ -186,13 +199,34 @@ async def run_scan(
         )
         try:
             for s in scores:
-                if s.composite < notify_threshold:
-                    break
-                if not await storage_obj.should_alert(s.token.address):
+                history = await storage_obj.score_history(s.token.address)
+                trend = compute_trend(history, threshold=notify_threshold)
+                # Determine hours since last alert for cooldown
+                should_alert_flag, reason = should_alert_with_trend(
+                    s,
+                    trend,
+                    threshold=notify_threshold,
+                )
+                if not should_alert_flag:
                     continue
-                sent = await notifier.send(TelegramNotifier.format_alert(s))
+                msg = TelegramNotifier.format_alert(s)
+                if reason in ("breakout", "rising_fast"):
+                    # Inject trend signal into the message body
+                    msg = (
+                        f"📈 <b>trend:</b> {trend.direction} "
+                        f"({trend.pct_change:+.1f}% over {trend.samples_used} samples)\n"
+                        + msg
+                    )
+                sent = await notifier.send(msg)
                 if sent:
                     await storage_obj.record_alert(s.token.address, s.composite)
+                    log.info(
+                        "alert_sent",
+                        token=s.token.symbol,
+                        reason=reason,
+                        composite=s.composite,
+                        trend=trend.direction,
+                    )
         finally:
             await notifier.aclose()
     finally:
@@ -231,4 +265,112 @@ async def watch_loop(
         await asyncio.sleep(interval_minutes * 60)
 
 
-__all__ = ["run_scan", "score_one_pair", "watch_loop"]
+async def run_scan_for_addresses(
+    addresses: list[str],
+    *,
+    settings: Settings | None = None,
+    notify_threshold: float | None = None,
+    storage: Storage | None = None,
+    dry_run_notify: bool = False,
+    holders: bool = False,
+    lp_check: bool = False,
+) -> list[Score]:
+    """Score a specific list of token addresses (skip discovery).
+
+    Faster than a full scan because it skips DexScreener search. Useful for
+    `bonnet watchlist score` where you already know what you want scored.
+    """
+    settings = settings or get_settings()
+    notify_threshold = notify_threshold if notify_threshold is not None else settings.score_alert_threshold
+
+    # Enrichment modules
+    enricher: ContractEnricher | None = None
+    holder_analyzer: HolderAnalyzer | None = None
+    lp_detector: LPLockDetector | None = None
+    honeypot: HoneypotSimulator | None = None
+    from .discovery.rpc_client import RpcClient
+    rpc = RpcClient(settings)
+    enricher = ContractEnricher(rpc)
+    honeypot = HoneypotSimulator(rpc)
+    if holders:
+        holder_analyzer = HolderAnalyzer(rpc)
+    if lp_check:
+        lp_detector = LPLockDetector(rpc)
+
+    scores: list[Score] = []
+    async with DexScreenerClient() as dex:
+        for addr in addresses:
+            addr = addr.lower()
+            try:
+                pairs = await dex.token_pairs(addr)
+            except Exception:
+                pairs = []
+            if not pairs:
+                # Fallback to search
+                try:
+                    pairs = await dex.search(addr[:10])
+                    pairs = [p for p in pairs if p.token.address.lower() == addr]
+                except Exception:
+                    pass
+            if not pairs:
+                log.warning("watchlist_score_no_pair", address=addr[:10])
+                continue
+            best = max(pairs, key=lambda p: p.liquidity_usd)
+            score = await score_one_pair(
+                best, enricher=enricher, honeypot=honeypot,
+                holder_analyzer=holder_analyzer, lp_detector=lp_detector,
+            )
+            scores.append(score)
+
+    scores.sort(key=lambda s: s.composite, reverse=True)
+
+    # Persist
+    storage_obj = storage
+    own_storage = False
+    if storage_obj is None:
+        storage_obj = Storage(settings.db_path)
+        await storage_obj.connect()
+        own_storage = True
+    try:
+        for s in scores:
+            try:
+                await storage_obj.record_score(s)
+            except Exception as e:
+                log.warning("record_failed", token=s.token.address, error=str(e))
+
+        # Alerts with trend
+        from .trend import compute_trend, should_alert_with_trend
+
+        notifier = TelegramNotifier(
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+            dry_run=dry_run_notify or not settings.telegram_bot_token,
+        )
+        try:
+            for s in scores:
+                history = await storage_obj.score_history(s.token.address)
+                trend = compute_trend(history, threshold=notify_threshold)
+                should_alert_flag, reason = should_alert_with_trend(s, trend, threshold=notify_threshold)
+                if not should_alert_flag:
+                    continue
+                msg = TelegramNotifier.format_alert(s)
+                if reason in ("breakout", "rising_fast"):
+                    msg = (
+                        f"📈 <b>trend:</b> {trend.direction} "
+                        f"({trend.pct_change:+.1f}% over {trend.samples_used} samples)\n"
+                        + msg
+                    )
+                sent = await notifier.send(msg)
+                if sent:
+                    await storage_obj.record_alert(s.token.address, s.composite)
+                    log.info("watchlist_alert_sent", token=s.token.symbol, reason=reason)
+        finally:
+            await notifier.aclose()
+    finally:
+        if own_storage:
+            await storage_obj.close()
+
+    return scores
+
+
+__all__ = ["run_scan", "run_scan_for_addresses", "score_one_pair", "watch_loop"]

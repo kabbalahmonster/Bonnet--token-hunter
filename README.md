@@ -138,10 +138,12 @@ bonnet watch --dry-run-notify --interval 5
 bonnet scan [--threshold F] [--top N] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
 bonnet watch [--interval MIN] [--threshold F] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
 bonnet history [--limit N] [--since-hours H]
+bonnet show <address> [--chain C] [--with-history] [--limit N]
 bonnet backtest <labels.json> [--threshold F] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
 bonnet watchlist add <address> [--symbol S] [--notes "..."]
 bonnet watchlist rm <address>
 bonnet watchlist list
+bonnet watchlist score [--threshold F] [--dry-run-notify]
 bonnet detect-factories <known_pool_address> [--kind-hint v3]
 bonnet --help
 ```
@@ -302,12 +304,16 @@ The scorer is the most-tested piece — if you change the weights or heuristics,
 
 ## Known limitations & roadmap
 
+- **Mint authority (AccessControl)** ✅ shipped in v0.4.0 — `getRoleMemberCount(MINTER_ROLE)` probe; if 0, mint authority is effectively renounced.
+- **Trend detection + breakout alerts** ✅ shipped in v0.4.0 — `compute_trend()` compares current score to last 5 samples; `should_alert_with_trend()` fires on `above_threshold`, `breakout`, or `rising_fast` (delta > 0.10 + 25%).
+- **`bonnet show <addr>`** ✅ shipped in v0.4.0 — drill into one token's full score breakdown + history + trend.
+- **`bonnet watchlist score`** ✅ shipped in v0.4.0 — score just watchlist entries (faster than full scan, useful for high-frequency tracking).
+- **GitHub Actions CI** ✅ shipped in v0.4.0 — matrix test on Python 3.11/3.12/3.13, ruff, import smoke test.
 - **Holder concentration** ✅ shipped in v0.3.0 (`--holders` flag, opt-in due to RPC cost)
 - **LP lock detection** ✅ shipped in v0.3.0 (`--lp-check` flag)
 - **Backtest mode** ✅ shipped in v0.3.0 (`bonnet backtest data/labels.json`)
 - **Systemd timer** ✅ shipped in v0.3.0 (`contrib/bonnet-scan.{service,timer}`)
 - **On-chain factory discovery is best-effort** for non-canonical chains. Public Robinhood RPC is rate-limited and slow for log scanning; production deployments should use a paid RPC.
-- **Mint authority** — many tokens use role-based minting (AccessControl) instead of a single owner. Probing `MINT_ROLE` membership via `eth_call` is doable but needs the role selector.
 - **Web dashboard** — deliberately deferred. The CLI + Telegram path is sufficient for v1.
 - **Labeled dataset growth** — backtest is only as good as the labels. Recommend labeling 20+ tokens (mix of good/moon/rug) and re-running to validate weight choices.
 - **Multi-source factory config** — once you've identified Robinhood Chain's specific factory contracts, populate `BONNET_FACTORIES` in `.env` to discover new pairs without rate-limited search APIs.

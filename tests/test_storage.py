@@ -61,3 +61,19 @@ class TestStorage:
         await store.watchlist_remove(t.address)
         rows = await store.watchlist_list()
         assert not any(r[0] == t.address for r in rows)
+
+    async def test_score_history_returns_chronological(self, store: Storage) -> None:
+        # Record three scores with different times
+        pair = fx.good_volume_steady()
+        s1 = score_pair(pair, mint_renounced=True)
+        s2 = score_pair(pair, mint_renounced=True)
+        s3 = score_pair(pair, mint_renounced=True)
+        await store.record_score(s1)
+        await store.record_score(s2)
+        await store.record_score(s3)
+
+        history = await store.score_history(pair.token.address)
+        assert len(history) == 3
+        # Should be ordered oldest first
+        for i in range(len(history) - 1):
+            assert history[i].scored_at <= history[i + 1].scored_at
