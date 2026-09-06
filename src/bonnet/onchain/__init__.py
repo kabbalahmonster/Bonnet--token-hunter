@@ -1,1 +1,1 @@
-"""On-chain subsystem: contract enrichment, holder queries, factory scans."""
+"""On-chain subsystem: contract enrichment, holder analysis, factory scans."""

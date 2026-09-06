@@ -57,6 +57,12 @@ class ContractEnricher:
         signals = ContractSignals()
         addr = token_address.lower()
 
+        # Some tokens come from sources that don't yield 40-hex addresses
+        # (e.g. Uniswap v4 pool IDs). Skip without crashing.
+        if len(addr) != 42:
+            log.warning("probe_invalid_address", address=token_address)
+            return signals
+
         # 1. Is it a contract at all?
         try:
             code = await self._rpc.eth_get_code(addr)

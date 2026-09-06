@@ -11,7 +11,9 @@ from .logging import get_logger
 from .models import Pair, Score
 from .notify.telegram import TelegramNotifier
 from .onchain.enricher import ContractEnricher
+from .onchain.holders import HolderAnalyzer
 from .onchain.honeypot import HoneypotSimulator
+from .onchain.lp_lock import LPLockDetector
 from .scoring.scorer import score_pair
 from .settings import Settings, get_settings
 from .storage.sqlite import Storage
@@ -24,6 +26,8 @@ async def score_one_pair(
     *,
     enricher: ContractEnricher | None = None,
     honeypot: HoneypotSimulator | None = None,
+    holder_analyzer: HolderAnalyzer | None = None,
+    lp_detector: LPLockDetector | None = None,
 ) -> Score:
     """Score a single pair, with optional on-chain enrichment."""
     kwargs: dict = {}
@@ -49,6 +53,36 @@ async def score_one_pair(
         except Exception as e:
             log.warning("honeypot_check_failed", token=pair.token.address, error=str(e))
 
+    if holder_analyzer is not None:
+        try:
+            stats = await holder_analyzer.analyze(pair.token.address)
+            if stats.top10_pct is not None:
+                kwargs["top10_holder_pct"] = stats.top10_pct
+            if stats.top1_pct is not None:
+                kwargs["top1_holder_pct"] = stats.top1_pct
+            log.info(
+                "holder_stats",
+                token=pair.token.symbol,
+                top10=stats.top10_pct,
+                top1=stats.top1_pct,
+                holders=stats.holder_count_estimate,
+            )
+        except Exception as e:
+            log.warning("holder_analysis_failed", token=pair.token.address, error=str(e))
+
+    if lp_detector is not None:
+        try:
+            lp_info = await lp_detector.probe(pair.pair_address)
+            if lp_info.lp_locked is not None:
+                kwargs["lp_locked"] = lp_info.lp_locked
+            if lp_info.dead_address_share_pct is not None and lp_info.dead_address_share_pct > 50:
+                # ≥50% LP in dead address → estimate lock duration as 'long'
+                kwargs["lp_lock_days_remaining"] = 365 * 4  # ~indefinite
+            if lp_info.notes:
+                log.info("lp_lock_info", token=pair.token.symbol, notes="; ".join(lp_info.notes))
+        except Exception as e:
+            log.warning("lp_lock_check_failed", token=pair.token.address, error=str(e))
+
     return score_pair(pair, **kwargs)
 
 
@@ -57,11 +91,18 @@ async def run_scan(
     *,
     top_n: int = 20,
     enrich: bool = True,
+    holders: bool = False,
+    lp_check: bool = False,
     notify_threshold: float | None = None,
     storage: Storage | None = None,
     dry_run_notify: bool = False,
 ) -> list[Score]:
     """One-shot scan: discover → enrich → score → record → maybe alert.
+
+    Args:
+      holders: if True, run holder-concentration analysis on each token
+               (expensive — scans up to 50k blocks of Transfer logs per token).
+      lp_check: if True, probe each pair for LP lock status.
 
     Returns the scored list, sorted by composite descending.
     """
@@ -85,15 +126,21 @@ async def run_scan(
     pairs = list(unique_pairs.values())
 
     # Optionally enrich + score
-    enricher = ContractEnricher.__new__(ContractEnricher) if enrich else None  # lazy
-    if enrich:
+    enricher: ContractEnricher | None = None
+    holder_analyzer: HolderAnalyzer | None = None
+    lp_detector: LPLockDetector | None = None
+    honeypot: HoneypotSimulator | None = None
+
+    if enrich or holders or lp_check:
         from .discovery.rpc_client import RpcClient
         rpc = RpcClient(settings)
-        enricher = ContractEnricher(rpc)
-        honeypot = HoneypotSimulator(rpc)
-    else:
-        enricher = None
-        honeypot = None
+        if enrich:
+            enricher = ContractEnricher(rpc)
+            honeypot = HoneypotSimulator(rpc)
+        if holders:
+            holder_analyzer = HolderAnalyzer(rpc)
+        if lp_check:
+            lp_detector = LPLockDetector(rpc)
 
     # Process in parallel but with a small concurrency cap to be polite to RPCs
     sem = asyncio.Semaphore(4)
@@ -101,7 +148,13 @@ async def run_scan(
     async def _process(p: Pair) -> Score | None:
         async with sem:
             try:
-                return await score_one_pair(p, enricher=enricher, honeypot=honeypot)
+                return await score_one_pair(
+                    p,
+                    enricher=enricher,
+                    honeypot=honeypot,
+                    holder_analyzer=holder_analyzer,
+                    lp_detector=lp_detector,
+                )
             except Exception as e:
                 log.warning("score_failed", token=p.token.symbol, error=str(e))
                 return None
@@ -157,6 +210,8 @@ async def watch_loop(
     settings: Settings | None = None,
     storage: Storage | None = None,
     dry_run_notify: bool = False,
+    holders: bool = False,
+    lp_check: bool = False,
 ) -> None:
     """Continuously scan + alert."""
     settings = settings or get_settings()
@@ -168,6 +223,8 @@ async def watch_loop(
                 notify_threshold=notify_threshold,
                 storage=storage,
                 dry_run_notify=dry_run_notify,
+                holders=holders,
+                lp_check=lp_check,
             )
         except Exception as e:
             log.error("watch_iteration_failed", error=str(e))

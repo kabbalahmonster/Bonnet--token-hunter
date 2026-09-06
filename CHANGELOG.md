@@ -2,6 +2,21 @@
 
 All notable changes to Bonnet.
 
+## [0.3.0] — Sprint 3
+
+### Added
+- **Holder concentration analysis** (`bonnet/onchain/holders.py`): scans up to 50k blocks of Transfer logs per token, replays a balance ledger from zero, reads `totalSupply()` for the percentage denominator, and returns top-1 / top-10 holder percentages. New `--holders` flag on `scan` and `watch`.
+- **LP lock detection** (`bonnet/onchain/lp_lock.py`): reads pair's `totalSupply()`, `balanceOf(0x..dead)`, and `owner()`. If ≥50% LP is held by the dead address (a common "permanent lock" pattern), flags `lp_locked=True`. New `--lp-check` flag on `scan` and `watch`.
+- **Backtest mode** (`bonnet/backtest.py`): `bonnet backtest data/labels.json` scores a JSON array of labeled tokens (good / moon / rug) and reports a confusion matrix, mean score per label, rug recall, good precision. Use this to tune `DEFAULT_WEIGHTS`.
+- **Sample labels** (`data/sample-labels.json`): one labeled Robinhood Names token to bootstrap backtest usage.
+- **Systemd timer** (`contrib/bonnet-scan.{service,timer}`): cron-style scheduling that runs `bonnet scan` every 5 min via systemd rather than a long-running process. Cleaner to monitor, no orphans.
+- **12 new tests** (holder helpers, LP helpers, backtest loader + formatter).
+
+### Changed
+- **`_decode_uint_from_word` bug fix**: previously multiplied offset by `2` (bytes) instead of `64` (hex chars per word), making all holder-balance calculations wrong. **Caught by tests.** Holder concentration numbers from sprint 2 were incorrect; this is now correct.
+- **v4 pool IDs handled gracefully** in all on-chain enrichers: `eth_call` to 64-hex addresses used to throw RPC errors; now skipped silently with a log line.
+- **Backtest fallback**: uses DexScreener search when per-address lookup returns 404.
+
 ## [0.2.0] — Sprint 2
 
 ### Added

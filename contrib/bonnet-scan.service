@@ -1,0 +1,15 @@
+[Unit]
+Description=Bonnet scheduled scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/fuzzbox/projects/coin-analyzer
+Environment=PATH=/home/fuzzbox/projects/coin-analyzer/.venv/bin
+EnvironmentFile=/home/fuzzbox/projects/coin-analyzer/.env
+# Add `--holders` and `--lp-check` here if you want them in scheduled scans
+# (warning: these make each scan take 30-60s on public RPCs)
+ExecStart=/home/fuzzbox/projects/coin-analyzer/.venv/bin/bonnet scan --top 20
+# Prevent overlapping runs if a scan takes longer than the timer interval
+TimeoutStartSec=10min

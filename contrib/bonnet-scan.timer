@@ -1,0 +1,14 @@
+[Unit]
+Description=Bonnet scheduled scanner — runs `bonnet scan` every 5 minutes
+
+[Timer]
+# Run 1 minute after boot, then every 5 minutes
+OnBootSec=1min
+OnUnitActiveSec=5min
+# If the system is off when a timer would have fired, run on next boot
+Persistent=true
+# Use a fixed random delay to avoid thundering-herd RPC calls
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

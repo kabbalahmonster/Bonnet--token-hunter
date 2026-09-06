@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import click
 
@@ -51,16 +52,31 @@ def cli() -> None:
 @click.option("--threshold", default=None, type=float, help="alert threshold (default from settings)")
 @click.option("--top", "top_n", default=20, show_default=True, type=int)
 @click.option("--no-enrich", is_flag=True, help="skip on-chain enrichment (faster, less accurate)")
+@click.option("--holders", is_flag=True, help="run holder-concentration analysis (expensive)")
+@click.option("--lp-check", is_flag=True, help="probe LP lock status per pair")
 @click.option("--dry-run-notify", is_flag=True, help="don't actually send telegram messages")
-def scan(threshold: float | None, top_n: int, no_enrich: bool, dry_run_notify: bool) -> None:
+def scan(
+    threshold: float | None,
+    top_n: int,
+    no_enrich: bool,
+    holders: bool,
+    lp_check: bool,
+    dry_run_notify: bool,
+) -> None:
     """One-shot scan of all Robinhood Chain pairs."""
     settings = get_settings()
     th = threshold if threshold is not None else settings.score_alert_threshold
     click.echo(f"Scanning Robinhood Chain... (threshold={th})")
+    if holders:
+        click.echo("  holder concentration: ENABLED (will be slow)")
+    if lp_check:
+        click.echo("  LP lock check: ENABLED")
     scores = asyncio.run(run_scan(
         settings=settings,
         top_n=top_n,
         enrich=not no_enrich,
+        holders=holders,
+        lp_check=lp_check,
         notify_threshold=th,
         dry_run_notify=dry_run_notify,
     ))
@@ -71,18 +87,33 @@ def scan(threshold: float | None, top_n: int, no_enrich: bool, dry_run_notify: b
 @click.option("--interval", default=15, show_default=True, type=int, help="minutes between scans")
 @click.option("--threshold", default=None, type=float)
 @click.option("--no-enrich", is_flag=True)
+@click.option("--holders", is_flag=True)
+@click.option("--lp-check", is_flag=True)
 @click.option("--dry-run-notify", is_flag=True)
-def watch(interval: int, threshold: float | None, no_enrich: bool, dry_run_notify: bool) -> None:
+def watch(
+    interval: int,
+    threshold: float | None,
+    no_enrich: bool,
+    holders: bool,
+    lp_check: bool,
+    dry_run_notify: bool,
+) -> None:
     """Continuously scan and alert (Ctrl-C to stop)."""
     settings = get_settings()
     th = threshold if threshold is not None else settings.score_alert_threshold
     click.echo(f"Watching every {interval}m; threshold={th}; Ctrl-C to stop")
+    if holders:
+        click.echo("  holder concentration: ENABLED (slow)")
+    if lp_check:
+        click.echo("  LP lock check: ENABLED")
     try:
         asyncio.run(watch_loop(
             interval_minutes=interval,
             notify_threshold=th,
             settings=settings,
             dry_run_notify=dry_run_notify,
+            holders=holders,
+            lp_check=lp_check,
         ))
     except KeyboardInterrupt:
         click.echo("\nbye")
@@ -163,6 +194,38 @@ def wl_list() -> None:
     click.echo(f"{len(rows)} entries:")
     for addr, sym, added in rows:
         click.echo(f"  {added[:19]}  {addr}  {sym}")
+
+
+@cli.command(name="backtest")
+@click.argument("labels_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--threshold", default=0.65, show_default=True, type=float)
+@click.option("--weight-volume", default=0.30, show_default=True, type=float)
+@click.option("--weight-volatility", default=0.30, show_default=True, type=float)
+@click.option("--weight-rug", default=0.40, show_default=True, type=float)
+def backtest_cmd(
+    labels_file: Path,
+    threshold: float,
+    weight_volume: float,
+    weight_volatility: float,
+    weight_rug: float,
+) -> None:
+    """Score labeled tokens and report separation between good/moon/rug.
+
+    LABELS_FILE is a JSON array of {address, symbol, label, notes}.
+    label must be one of: good, moon, rug.
+    """
+    from .backtest import format_summary, run_backtest
+    from .settings import get_settings
+
+    settings = get_settings()
+    weights = {"volume": weight_volume, "volatility": weight_volatility, "rug": weight_rug}
+    summary = asyncio.run(run_backtest(
+        labels_file,
+        settings=settings,
+        threshold=threshold,
+        weights=weights,
+    ))
+    click.echo(format_summary(summary))
 
 
 @cli.command(name="detect-factories")

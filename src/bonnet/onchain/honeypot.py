@@ -65,6 +65,11 @@ class HoneypotSimulator:
         token = token_address.lower()
         holder = holder_address.lower()
 
+        # Skip non-address inputs (e.g. v4 pool IDs)
+        if len(token) != 42 or len(holder) != 42:
+            log.warning("honeypot_invalid_address", token=token_address, holder=holder_address)
+            return False, 0.0
+
         # Read holder's balance before
         bal_before_hex = await self._rpc.eth_call(
             to=token,

@@ -15,6 +15,8 @@ The engine is independent of every surface — Telegram alerts, a future web das
   - Contract code presence (`eth_getCode`)
   - `owner()` / `getOwner()` calls to detect renounced ownership
   - EIP-1967 proxy detection via storage slot probe
+  - **Holder concentration** (optional, `--holders`): scans up to 50k blocks of Transfer logs per token, replays a balance ledger, computes top-1 and top-10 holder percentages against `totalSupply()`
+  - **LP lock detection** (optional, `--lp-check`): reads pair's `totalSupply()` and `balanceOf(0x..dead)`, plus `owner()` to detect known locker contracts or dead-address renouncement
   - Honeypot simulation: simulate a token transfer and detect abnormal tax (or reverts)
 - **Scores** each token with an explainable composite:
   - **Volume quality** — sustained volume, liquidity ratio penalty (log scale)
@@ -133,9 +135,10 @@ bonnet watch --dry-run-notify --interval 5
 ## CLI reference
 
 ```
-bonnet scan [--threshold F] [--top N] [--no-enrich] [--dry-run-notify]
-bonnet watch [--interval MIN] [--threshold F] [--no-enrich] [--dry-run-notify]
+bonnet scan [--threshold F] [--top N] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
+bonnet watch [--interval MIN] [--threshold F] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
 bonnet history [--limit N] [--since-hours H]
+bonnet backtest <labels.json> [--threshold F] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
 bonnet watchlist add <address> [--symbol S] [--notes "..."]
 bonnet watchlist rm <address>
 bonnet watchlist list
@@ -215,6 +218,28 @@ All settings are loaded from environment variables prefixed `BONNET_`. See `.env
 
 ---
 
+## Backtesting
+
+Once you have a labeled set of tokens (good / moon / rug), validate your scoring weights against history:
+
+1. Create `data/labels.json`:
+   ```json
+   [
+     {"address": "0x...", "symbol": "GOOD", "label": "good", "notes": "sustained"},
+     {"address": "0x...", "symbol": "MOON", "label": "moon", "notes": "10x winner"},
+     {"address": "0x...", "symbol": "RUG",  "label": "rug",  "notes": "scammed"}
+   ]
+   ```
+2. Run:
+   ```bash
+   bonnet backtest data/labels.json --threshold 0.65
+   ```
+3. Output is a confusion matrix (good/moon vs rug), mean score per label, rug recall, good precision, and per-token scores.
+
+Useful for tuning `DEFAULT_WEIGHTS` in `scoring/scorer.py`. With at least 5 good/moon and 5 rug examples, you can start seeing whether your weights separate them well.
+
+---
+
 ## Deploying as a service
 
 The repo ships with a `bonnet.service` template you can drop into `~/.config/systemd/user/` for a user-mode systemd unit. After editing the paths:
@@ -229,6 +254,21 @@ journalctl --user -u bonnet.service -f   # follow logs
 This runs `bonnet watch --interval 15` as a managed service that restarts on crash. To survive reboots, enable lingering once: `sudo loginctl enable-linger $USER`.
 
 > **Isolation note**: Bonnet lives at `/home/fuzzbox/projects/coin-analyzer/` with its own venv, its own DB, its own systemd unit. It does not touch any other agent's files, ports, or services. The Telegram bot token is separate from any other bot's token.
+
+### Scheduled scans (timer-based, recommended for production)
+
+Long-running `bonnet watch` is convenient but harder to monitor. A systemd timer is cleaner:
+
+```bash
+# Edit contrib/bonnet-scan.service and .timer to point at your install dir
+cp contrib/bonnet-scan.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now bonnet-scan.timer
+systemctl --user list-timers bonnet-scan.timer   # check schedule
+journalctl --user -u bonnet-scan.service -f     # follow logs
+```
+
+The timer runs `bonnet scan` every 5 minutes with a 30s random delay (so multiple instances don't thunder the RPC). Each run is a fresh process — no orphans, easy to monitor, easy to roll back.
 
 ---
 
@@ -262,12 +302,15 @@ The scorer is the most-tested piece — if you change the weights or heuristics,
 
 ## Known limitations & roadmap
 
+- **Holder concentration** ✅ shipped in v0.3.0 (`--holders` flag, opt-in due to RPC cost)
+- **LP lock detection** ✅ shipped in v0.3.0 (`--lp-check` flag)
+- **Backtest mode** ✅ shipped in v0.3.0 (`bonnet backtest data/labels.json`)
+- **Systemd timer** ✅ shipped in v0.3.0 (`contrib/bonnet-scan.{service,timer}`)
 - **On-chain factory discovery is best-effort** for non-canonical chains. Public Robinhood RPC is rate-limited and slow for log scanning; production deployments should use a paid RPC.
-- **Holder concentration isn't auto-computed yet** — `eth_getLogs` over Transfer events is doable but expensive. Plan: top-N holders from a recent block range, computed lazily and cached.
-- **LP lock detection is incomplete** — heuristic only, doesn't query lockers directly. Real detection requires either an LP-lock registry or finding the LP-token contract and checking its owner.
 - **Mint authority** — many tokens use role-based minting (AccessControl) instead of a single owner. Probing `MINT_ROLE` membership via `eth_call` is doable but needs the role selector.
 - **Web dashboard** — deliberately deferred. The CLI + Telegram path is sufficient for v1.
-- **Backtest mode** — once you have a labeled set of known rugs / known good tokens, a backtester can validate weight choices against history.
+- **Labeled dataset growth** — backtest is only as good as the labels. Recommend labeling 20+ tokens (mix of good/moon/rug) and re-running to validate weight choices.
+- **Multi-source factory config** — once you've identified Robinhood Chain's specific factory contracts, populate `BONNET_FACTORIES` in `.env` to discover new pairs without rate-limited search APIs.
 
 ---
 
