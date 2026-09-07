@@ -135,11 +135,12 @@ bonnet watch --dry-run-notify --interval 5
 ## CLI reference
 
 ```
-bonnet scan [--threshold F] [--top N] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
+bonnet scan [--threshold F] [--top N] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify] [--auto-grow-labels] [--auto-grow-top N] [--auto-grow-bottom N]
 bonnet watch [--interval MIN] [--threshold F] [--no-enrich] [--holders] [--lp-check] [--dry-run-notify]
 bonnet history [--limit N] [--since-hours H]
 bonnet show <address> [--chain C] [--with-history] [--limit N]
 bonnet backtest [--labels-file FILE] [--threshold F] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
+bonnet backtest-cv [--labels-file FILE] [--threshold F] [--k N] [--weight-volume V] [--weight-volatility V] [--weight-rug R]
 bonnet watchlist add <address> [--symbol S] [--notes "..."]
 bonnet watchlist rm <address>
 bonnet watchlist list
@@ -149,6 +150,7 @@ bonnet label-list [--filter-label good|moon|rug]
 bonnet label-rm <address>
 bonnet label-import <file.csv|file.json>
 bonnet label-auto [--include-watchlist/--no-watchlist] [--include-discovered/--no-discovered]
+bonnet telegram-bot [--labels-path FILE]
 bonnet detect-factories <known_pool_address> [--kind-hint v3]
 bonnet --help
 ```
@@ -225,6 +227,30 @@ All settings are loaded from environment variables prefixed `BONNET_`. See `.env
 
 ---
 
+## Telegram bot (interactive labeling)
+
+Once you have a Telegram bot token configured (see `.env.example`), run `bonnet telegram-bot` to start a long-polling command listener. It only responds to messages from your configured `BONNET_TELEGRAM_CHAT_ID` (security).
+
+Commands:
+
+- `/label <addr> <good|moon|rug> [notes...]` — persist a label to `data/labels.json`. Example: `/label 0x90a71817bda6dac8c3a28bbfd877b02d667ae2f9 moon ecosystem token`
+- `/show <addr>` — read-only summary of the latest score breakdown from local storage
+- `/ping` — bot uptime
+- `/help` — this message
+
+Deploy as a managed service:
+
+```bash
+cp contrib/bonnet-telegram-bot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now bonnet-telegram-bot.service
+journalctl --user -u bonnet-telegram-bot.service -f
+```
+
+The bot writes directly to `data/labels.json` so labels you tag in Telegram immediately feed into the next `bonnet scan` / `bonnet backtest` run.
+
+---
+
 ## Backtesting
 
 Backtest scores labeled tokens against the live scoring engine and reports how well the weights separate good / moon / rug.
@@ -271,6 +297,17 @@ bonnet backtest --labels-file custom.json    # use a different labels file
 Output is a confusion matrix (good/moon vs rug), mean score per label, rug recall, good precision, and per-token scores.
 
 Useful for tuning `DEFAULT_WEIGHTS` in `scoring/scorer.py`. With at least 5 good/moon and 5 rug examples, you can start seeing whether your weights separate them well.
+
+### Cross-validation
+
+`bonnet backtest` evaluates your weights on your full labeled set, which can overfit to your specific labels. Run k-fold cross-validation to detect overfitting:
+
+```bash
+bonnet backtest-cv --k 5                # 5-fold CV (default)
+bonnet backtest-cv --k 10 --threshold 0.5   # tune threshold + folds
+```
+
+Output reports per-fold and mean rug_recall + good_precision. **High variance across folds = labels are too few or unbalanced.** With ≤10 labels, results will be noisy — keep labeling until the means stabilize.
 
 ---
 
@@ -348,10 +385,14 @@ The scorer is the most-tested piece — if you change the weights or heuristics,
 - **Backtest mode** ✅ shipped in v0.3.0
 - **Systemd timer** ✅ shipped in v0.3.0
 - **Labels subsystem (manual/import/auto)** ✅ shipped in v0.5.0
+- **Telegram bot** ✅ shipped in v0.6.0
+- **k-fold cross-validation** ✅ shipped in v0.6.0
+- **Auto-grow labels from scan** ✅ shipped in v0.6.0 (`--auto-grow-labels`)
 - **On-chain factory discovery is best-effort** for non-canonical chains. Public Robinhood RPC is rate-limited and slow for log scanning; production deployments should use a paid RPC.
-- **Labeled dataset growth** — auto-bootstrap gives 1–3 labels per scan. Manual labeling drives real signal. Aim for ≥20 labels spanning good/moon/rug.
+- **Labeled dataset growth** — auto-bootstrap + auto-grow give 1–5 labels per scan. Manual labeling via Telegram drives real signal. Aim for ≥20 labels spanning good/moon/rug.
 - **Web dashboard** — deliberately deferred. The CLI + Telegram path is sufficient for v1.
 - **Multi-source factory config** — once you've identified Robinhood Chain's specific factory contracts, populate `BONNET_FACTORIES` in `.env` to discover new pairs without rate-limited search APIs.
+- **Auto-tune weights via grid search** — sweep `(w_volume, w_volatility, w_rug)` to maximize good precision × rug recall on the labeled set. Lower priority — manual tuning with the auto-grow feedback loop is fine for v1.
 
 ---
 

@@ -2,6 +2,19 @@
 
 All notable changes to Bonnet.
 
+## [0.6.0] — Sprint 6
+
+### Added
+- **Telegram bot** (`bonnet/notify/telegram_bot.py`): long-polling command listener. Supports `/label`, `/show`, `/ping`, `/help`. Persists labels via `LabelStore`. Only responds to configured chat_id (security). 15 new tests cover dispatch, validation, persistence.
+- **`bonnet telegram-bot`** CLI: runs the listener as a foreground process. Deploy via systemd (instructions in README).
+- **k-fold cross-validation** (`bonnet/cv.py`): `bonnet backtest-cv --k N` runs N-fold CV and reports per-fold + mean rug_recall / good_precision. Detects weight overfitting and reveals label imbalance. 7 new tests cover stratified split, seed reproducibility, k bounds.
+- **Auto-grow labels** (`bonnet/auto_grow.py`): top-N scan results auto-labeled "good", bottom-N labeled "rug" (configurable via `--auto-grow-top` / `--auto-grow-bottom`). Manual labels always win. Wired into `bonnet scan --auto-grow-labels`. 6 new tests cover thresholds, manual-wins, edge cases.
+- **`bonnet-scan.service` updated** to use `--auto-grow-labels` by default.
+
+### Live verified
+- `bonnet scan --auto-grow-labels` grew `data/labels.json` from 5 to 7 entries — auto-labeled 2 rug candidates from the bottom of the live scan.
+- `bonnet backtest-cv --k 5` correctly surfaced fold imbalance (some folds empty because labels are too few).
+
 ## [0.5.0] — Sprint 5
 
 ### Added

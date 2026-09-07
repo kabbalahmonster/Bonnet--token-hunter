@@ -107,6 +107,9 @@ async def run_scan(
     notify_threshold: float | None = None,
     storage: Storage | None = None,
     dry_run_notify: bool = False,
+    auto_grow_labels: bool = False,
+    auto_grow_top_n: int = 3,
+    auto_grow_bottom_n: int = 3,
 ) -> list[Score]:
     """One-shot scan: discover → enrich → score → record → maybe alert.
 
@@ -114,6 +117,8 @@ async def run_scan(
       holders: if True, run holder-concentration analysis on each token
                (expensive — scans up to 50k blocks of Transfer logs per token).
       lp_check: if True, probe each pair for LP lock status.
+      auto_grow_labels: if True, auto-label top-N as 'good' and bottom-N as 'rug'
+                        (writes to data/labels.json; manual labels always win).
 
     Returns the scored list, sorted by composite descending.
     """
@@ -234,6 +239,27 @@ async def run_scan(
             await storage_obj.close()
 
     log.info("scan_done", scored=len(scores), top_composite=scores[0].composite if scores else 0.0)
+
+    # Auto-grow labels if requested
+    if auto_grow_labels and scores:
+        from pathlib import Path
+
+        from .auto_grow import AutoGrowConfig, auto_grow_from_scores
+        from .labels import LabelStore
+
+        labels_path = Path("data/labels.json")
+        store = LabelStore.load(labels_path)
+        cfg = AutoGrowConfig(top_n=auto_grow_top_n, bottom_n=auto_grow_bottom_n)
+        added_good, added_rug = auto_grow_from_scores(scores, store, cfg)
+        if added_good or added_rug:
+            store.save()
+            log.info(
+                "auto_grow_persisted",
+                added_good=added_good,
+                added_rug=added_rug,
+                path=str(labels_path),
+            )
+
     return scores[:top_n]
 
 

@@ -5,6 +5,12 @@ Commands:
   watch        continuous scan + alert (Ctrl-C to stop)
   history      show recent scores from the local DB
   watchlist    add / remove / list tracked tokens
+  show         drill into one token's score breakdown
+  backtest     score labeled tokens + report good/moon/rug separation
+  label        manually label a token (good/moon/rug)
+  label-auto   bootstrap labels from heuristics + watchlist
+  label-import import labels from CSV/JSON
+  telegram-bot long-poll for /label and /show commands in Telegram
   detect-factories  attempt to discover factory + event sig for a known pool
 
 Run `bonnet --help` for full options.
@@ -56,6 +62,25 @@ def cli() -> None:
 @click.option("--holders", is_flag=True, help="run holder-concentration analysis (expensive)")
 @click.option("--lp-check", is_flag=True, help="probe LP lock status per pair")
 @click.option("--dry-run-notify", is_flag=True, help="don't actually send telegram messages")
+@click.option(
+    "--auto-grow-labels",
+    is_flag=True,
+    help="auto-label top-N as 'good' and bottom-N as 'rug' (writes to data/labels.json)",
+)
+@click.option(
+    "--auto-grow-top",
+    default=3,
+    show_default=True,
+    type=int,
+    help="top-N count for --auto-grow-labels",
+)
+@click.option(
+    "--auto-grow-bottom",
+    default=3,
+    show_default=True,
+    type=int,
+    help="bottom-N count for --auto-grow-labels",
+)
 def scan(
     threshold: float | None,
     top_n: int,
@@ -63,6 +88,9 @@ def scan(
     holders: bool,
     lp_check: bool,
     dry_run_notify: bool,
+    auto_grow_labels: bool,
+    auto_grow_top: int,
+    auto_grow_bottom: int,
 ) -> None:
     """One-shot scan of all Robinhood Chain pairs."""
     settings = get_settings()
@@ -72,6 +100,8 @@ def scan(
         click.echo("  holder concentration: ENABLED (will be slow)")
     if lp_check:
         click.echo("  LP lock check: ENABLED")
+    if auto_grow_labels:
+        click.echo(f"  auto-grow labels: ENABLED (top {auto_grow_top} = good, bottom {auto_grow_bottom} = rug)")
     scores = asyncio.run(run_scan(
         settings=settings,
         top_n=top_n,
@@ -80,6 +110,9 @@ def scan(
         lp_check=lp_check,
         notify_threshold=th,
         dry_run_notify=dry_run_notify,
+        auto_grow_labels=auto_grow_labels,
+        auto_grow_top_n=auto_grow_top,
+        auto_grow_bottom_n=auto_grow_bottom,
     ))
     _print_score_table(scores, threshold=th)
 
@@ -337,6 +370,54 @@ def backtest_cmd(
     click.echo(format_summary(summary))
 
 
+@cli.command(name="backtest-cv")
+@click.option(
+    "--labels-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to labels.json (default: data/labels.json)",
+)
+@click.option("--threshold", default=0.65, show_default=True, type=float)
+@click.option("--k", default=5, show_default=True, type=int, help="number of folds")
+@click.option("--weight-volume", default=0.30, show_default=True, type=float)
+@click.option("--weight-volatility", default=0.30, show_default=True, type=float)
+@click.option("--weight-rug", default=0.40, show_default=True, type=float)
+def backtest_cv_cmd(
+    labels_file: Path | None,
+    threshold: float,
+    k: int,
+    weight_volume: float,
+    weight_volatility: float,
+    weight_rug: float,
+) -> None:
+    """Run k-fold cross-validation to detect weight overfitting.
+
+    Reports per-fold and mean rug_recall and good_precision. High variance
+    across folds = labels too few or unbalanced.
+    """
+    from .cv import format_cv_summary, run_cv
+    from .settings import get_settings
+
+    settings = get_settings()
+    weights = {"volume": weight_volume, "volatility": weight_volatility, "rug": weight_rug}
+    labels_path = labels_file or Path("data/labels.json")
+    if not labels_path.exists():
+        click.echo(
+            f"labels file not found: {labels_path}\n"
+            "Run `bonnet label`, `bonnet label-import`, or `bonnet label-auto`.",
+            err=True,
+        )
+        sys.exit(1)
+    cv_summary = asyncio.run(run_cv(
+        labels_path,
+        settings=settings,
+        k=k,
+        threshold=threshold,
+        weights=weights,
+    ))
+    click.echo(format_cv_summary(cv_summary))
+
+
 @cli.command(name="label")
 @click.argument("address")
 @click.argument("label_value", metavar="LABEL")
@@ -509,6 +590,51 @@ def label_auto_cmd(include_watchlist: bool, include_discovered: bool) -> None:
         f"Total labels: {sum(counts.values())} "
         f"(good={counts['good']}, moon={counts['moon']}, rug={counts['rug']})"
     )
+
+
+@cli.command(name="telegram-bot")
+@click.option(
+    "--labels-path",
+    default="data/labels.json",
+    show_default=True,
+    help="Path to labels.json (where /label writes).",
+)
+def telegram_bot_cmd(labels_path: str) -> None:
+    """Run the Telegram bot listener (long-polling, no webhook needed).
+
+    Listens for /label, /show, /ping, /help messages from the configured
+    chat. Persists labels to --labels-path.
+
+    Requires BONNET_TELEGRAM_BOT_TOKEN and BONNET_TELEGRAM_CHAT_ID in .env.
+    The bot only responds to messages from the configured chat_id (security).
+    """
+    import asyncio as _asyncio
+
+    from .notify.telegram_bot import TelegramBot
+    from .settings import get_settings
+
+    settings = get_settings()
+    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        click.echo(
+            "telegram not configured: set BONNET_TELEGRAM_BOT_TOKEN and "
+            "BONNET_TELEGRAM_CHAT_ID in .env",
+            err=True,
+        )
+        sys.exit(1)
+
+    bot = TelegramBot(
+        bot_token=settings.telegram_bot_token,
+        chat_id=settings.telegram_chat_id,
+        labels_path=labels_path,
+    )
+    click.echo(
+        f"Bonnet bot listening on chat_id={settings.telegram_chat_id}; "
+        "Ctrl-C to stop"
+    )
+    try:
+        _asyncio.run(bot.run())
+    except KeyboardInterrupt:
+        click.echo("\nbye")
 
 
 @cli.command(name="detect-factories")

@@ -17,4 +17,5 @@ logs/
 data/labels.json
 data/*.json
 !data/sample-labels.json
-!data/sample-labels.csv.github/workflows/
+!data/sample-labels.csv
+/.github/
